@@ -1,68 +1,59 @@
-import java.sql.*;
-import java.util.*;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+import java.io.IOException;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Paths;
+import java.util.Scanner;
 
 public class BookBot {
-    private static final String DB_URL = "jdbc:mysql://localhost:3306/books";
-    private static final String USERNAME = "user";
-    private static final String PASSWORD = "password";
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws IOException {
         Scanner scanner = new Scanner(System.in);
-        while (true) {
-            System.out.print("Enter a query: ");
-            String query = scanner.nextLine();
-            String response = handleQuery(query);
-            System.out.println("Response: " + response);
-        }
+        System.out.print("Enter the title of the book: ");
+        String bookTitle = scanner.nextLine();
+        String bookInfo = getBookInfo(bookTitle);
+        System.out.println(bookInfo);
+        Files.write(Paths.get("book_info.json"), bookInfo.getBytes());
     }
 
-    private static String handleQuery(String query) {
-        if (query.startsWith("book info ")) {
-            return getBookInfo(query.substring(10));
-        } else if (query.startsWith("books by ")) {
-            return getBooksByAuthor(query.substring(9));
+    public static String getBookInfo(String bookTitle) throws IOException {
+        // Replace spaces in the book title with + sign for the URL
+        bookTitle = bookTitle.replaceAll(" ", "+");
+        URL url = new URL("https://www.googleapis.com/books/v1/volumes?q=" + bookTitle);
+        Scanner scanner = new Scanner(url.openStream());
+        StringBuilder bookInfo = new StringBuilder();
+        while (scanner.hasNextLine()) {
+            bookInfo.append(scanner.nextLine());
+        }
+        scanner.close();
+        // Extract relevant information from the API response
+        JsonParser parser = new JsonParser();
+        JsonObject root = parser.parse(bookInfo.toString()).getAsJsonObject();
+        JsonArray items = root.getAsJsonArray("items");
+        if (items.size() == 0) {
+            return "Sorry, no information found for the book '" + bookTitle + "'";
         } else {
-            return "Invalid query.";
-        }
-    }
-
-    private static String getBookInfo(String title) {
-        try (Connection connection = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD)) {
-            String sql = "SELECT * FROM books WHERE title = ?";
-            PreparedStatement statement = connection.prepareStatement(sql);
-            statement.setString(1, title);
-            ResultSet resultSet = statement.executeQuery();
-            if (resultSet.next()) {
-                String author = resultSet.getString("author");
-                String publicationDate = resultSet.getString("publication_date");
-                String description = resultSet.getString("description");
-                return title + " by " + author + ", published on " + publicationDate + "\n" + description;
-            } else {
-                return "Book not found.";
-            }
-        } catch (SQLException e) {
-            return "Error retrieving book information.";
-        }
-    }
-
-    private static String getBooksByAuthor(String author) {
-        try (Connection connection = DriverManager.getConnection(DB_URL, USERNAME, PASSWORD)) {
-            String sql = "SELECT title FROM books WHERE author = ?";
-            PreparedStatement statement = connection.prepareStatement(sql);
-            statement.setString(1, author);
-            ResultSet resultSet = statement.executeQuery();
-            if (resultSet.next()) {
-                StringBuilder sb = new StringBuilder();
-                sb.append("Books by " + author + ":\n");
-                do {
-                    sb.append("- " + resultSet.getString("title") + "\n");
-                } while (resultSet.next());
-                return sb.toString();
-            } else {
-                return "Author not found.";
-            }
-        } catch (SQLException e) {
-            return "Error retrieving books by author.";
-        }
+            JsonObject volumeInfo = items.get(0).getAsJsonObject().getAsJsonObject("volumeInfo");
+            JsonElement title = volumeInfo.get("title");
+            JsonElement author = volumeInfo.get("authors");
+            JsonElement publisher = volumeInfo.get("publisher");
+            JsonElement publishedDate = volumeInfo.get("publishedDate");
+            JsonElement description = volumeInfo.get("description");
+            String titleStr = title != null ? title.getAsString() : "Title not found";
+            String authorStr = author != null ? author.getAsJsonArray().get(0).getAsString() : "Author not found";
+            String publisherStr = publisher != null ? publisher.getAsString() : "Publisher not found";
+            String publishedYearStr = publishedDate != null ? publishedDate.getAsString().startsWith("0000") ? "Published Year not found" : publishedDate.getAsString().substring(0, 4) : "Published Year not found";
+            String descriptionStr = description != null ? description.getAsString() : "Description not found";
+            bookInfo = new StringBuilder("Title: " + titleStr + "\n"
+                    + "Author: " + authorStr + "\n"
+                    + "Publisher: " + publisherStr + "\n"
+                    + "Published Year: " + publishedYearStr + "\n"
+                    + "Description: " + descriptionStr);
+        } 
+        return bookInfo.toString();
     }
 }
